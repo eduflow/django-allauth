@@ -249,35 +249,42 @@ class SocialLogin(object):
     def lookup(self):
         """
         Lookup existing account, if any.
+        At this stage `self.account` will always be a new instance of
+        `SocialAccount`. Likewise `self.user` will always be a new instance
+        of `User`. This method will search the `socialaccount_socialaccount`
+        table for existing rows matching the `provider` and `uid` data provided
+        in the response and update `self.account` and `self.user` with the
+        account/user that has the most recent login (if any).
         """
         assert not self.is_existing
-        try:
-            a = SocialAccount.objects.get(provider=self.account.provider,
-                                          uid=self.account.uid)
-            # Update account
-            a.extra_data = self.account.extra_data
-            self.account = a
-            self.user = self.account.user
-            a.save()
-            # Update token
-            if app_settings.STORE_TOKENS and self.token and self.token.app.pk:
-                assert not self.token.pk
-                try:
-                    t = SocialToken.objects.get(account=self.account,
-                                                app=self.token.app)
-                    t.token = self.token.token
-                    if self.token.token_secret:
-                        # only update the refresh token if we got one
-                        # many oauth2 providers do not resend the refresh token
-                        t.token_secret = self.token.token_secret
-                    t.expires_at = self.token.expires_at
-                    t.save()
-                    self.token = t
-                except SocialToken.DoesNotExist:
-                    self.token.account = a
-                    self.token.save()
-        except SocialAccount.DoesNotExist:
-            pass
+        a = SocialAccount.objects.filter(provider=self.account.provider,
+                                         uid=self.account.uid) \
+            .order_by('-user__last_login').first()
+        if a is None:
+            return
+
+        # Update account
+        a.extra_data = self.account.extra_data
+        self.account = a
+        self.user = self.account.user
+        a.save()
+        # Update token
+        if app_settings.STORE_TOKENS and self.token and self.token.app.pk:
+            assert not self.token.pk
+            try:
+                t = SocialToken.objects.get(account=self.account,
+                                            app=self.token.app)
+                t.token = self.token.token
+                if self.token.token_secret:
+                    # only update the refresh token if we got one
+                    # many oauth2 providers do not resend the refresh token
+                    t.token_secret = self.token.token_secret
+                t.expires_at = self.token.expires_at
+                t.save()
+                self.token = t
+            except SocialToken.DoesNotExist:
+                self.token.account = a
+                self.token.save()
 
     def get_redirect_url(self, request):
         url = self.state.get('next')
